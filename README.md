@@ -1,2 +1,5 @@
-# soc-lab-elk-stack
-SOC Lab ELK stack with Filebeat journald ingestion
+# SOC Home Lab — ELK Stack + Filebeat
+
+A home security operations lab built on a MacBook Air M1 (8GB RAM) using Docker and VirtualBox.
+
+## Architecture
