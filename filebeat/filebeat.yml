@@ -1,0 +1,12 @@
+filebeat.inputs:
+- type: journald
+  id: journald-system
+  enabled: true
+
+setup.kibana:
+  host: "ELASTICSEARCH_HOST:5601"
+
+output.elasticsearch:
+  hosts: ["ELASTICSEARCH_HOST:9200"]
+  username: "elastic"
+  password: "REDACTED"
