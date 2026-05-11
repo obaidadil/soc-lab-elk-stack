@@ -1,118 +1,220 @@
-# SOC Home Lab — ELK Stack + Filebeat
+# SOC Lab — Elastic Stack (ELK) on macOS Apple Silicon
 
-A home security operations center (SOC) lab built on a MacBook Air M1 (8GB RAM) using Docker and VirtualBox. Demonstrates end-to-end log ingestion from a virtual Ubuntu machine into a self-hosted Elastic SIEM stack.
+> A local SIEM lab built with Elasticsearch and Kibana using Docker Compose on an Apple Silicon MacBook Air (M1, 8GB RAM). Covers stack setup, authentication configuration, service connectivity, Kibana access, and documented troubleshooting.
 
-## Architecture
+---
+
+## Objectives
+
+- Deploy Elasticsearch and Kibana locally with Docker Compose
+- Configure secure inter-service authentication between Kibana and Elasticsearch
+- Validate Kibana browser access and login
+- Understand and debug common Elastic startup and connectivity issues
+- Document a reproducible setup process for portfolio and future reference
+
+---
+
+## Lab Architecture
 
 ```
-Ubuntu VM (victim-server)
-        |
-    Filebeat 8.19.14
-    (journald input)
-        |
-        v
-Mac Host — Docker Desktop
-  ├── Elasticsearch 8.17.4  :9200
-  └── Kibana 8.17.4         :5601
+┌─────────────────────────────────────────┐
+│         macOS Host (M1, 8GB RAM)        │
+│                                         │
+│  ┌─────────────────────────────────┐    │
+│  │        Docker Network           │    │
+│  │                                 │    │
+│  │  ┌──────────────┐               │    │
+│  │  │ Elasticsearch│  :9200        │    │
+│  │  │    es01      │               │    │
+│  │  └──────┬───────┘               │    │
+│  │         │ http://elasticsearch  │    │
+│  │  ┌──────▼───────┐               │    │
+│  │  │    Kibana    │  :5601        │    │
+│  │  │    kib01     │               │    │
+│  │  └──────────────┘               │    │
+│  └─────────────────────────────────┘    │
+└─────────────────────────────────────────┘
 ```
 
-- The Ubuntu VM runs in VirtualBox using NAT networking
-- From the VM, the Mac host is reachable at `10.0.2.2`
-- Filebeat reads from `journald` and ships logs directly to Elasticsearch
-- Kibana provides the search and visualization interface via `http://localhost:5601`
+| Component     | Version | Port | Container  |
+|---------------|---------|------|------------|
+| Elasticsearch | 8.17.4  | 9200 | es01       |
+| Kibana        | 8.17.4  | 5601 | kib01      |
 
-## Stack
+---
 
-| Component       | Version  | Role                        |
-|----------------|----------|-----------------------------|
-| Elasticsearch  | 8.17.4   | Log storage and indexing    |
-| Kibana         | 8.17.4   | Visualization and search    |
-| Filebeat       | 8.19.14  | Log shipper (Ubuntu VM)     |
-| Docker Desktop | Latest   | Container runtime (Mac)     |
-| VirtualBox     | Latest   | Ubuntu VM hypervisor        |
+## Tech Stack
+
+- Docker Desktop (Apple Silicon)
+- Elasticsearch 8.17.4
+- Kibana 8.17.4
+- macOS Terminal / zsh
+- curl
+
+---
 
 ## Prerequisites
 
-- MacBook (Apple Silicon or Intel) with Docker Desktop installed
-- VirtualBox with an Ubuntu Server VM (NAT networking)
-- VM must be able to reach Mac host at `10.0.2.2`
+- Docker Desktop installed and running
+- At least 3GB RAM allocated to Docker
+- Ports 9200 and 5601 free on the host
+
+---
 
 ## Setup
 
-### 1. Start the SIEM stack on the Mac
+### 1. Clone the repo
 
 ```bash
-cd ~/soc-lab
+git clone https://github.com/obaidadil/soc-lab-elk-stack.git
+cd soc-lab-elk-stack
+```
+
+### 2. Start the stack
+
+```bash
 docker compose up -d
 ```
 
-### 2. Set the Kibana system password
+### 3. Wait for Elasticsearch to become healthy
 
 ```bash
-curl -u elastic:YOUR_PASSWORD \
-  -X POST http://localhost:9200/_security/user/kibana_system/_password \
-  -H 'Content-Type: application/json' \
-  -d '{"password":"YOUR_KIBANA_PASSWORD"}'
+docker compose ps
 ```
 
-### 3. Install Filebeat on the Ubuntu VM
+Elasticsearch has a healthcheck configured. Kibana will not start until it passes.
+
+### 4. Reset the kibana_system password
+
+Once Elasticsearch is healthy, set the `kibana_system` password to match what is in `docker-compose.yml`:
 
 ```bash
-curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | \
-  sudo gpg --dearmor -o /usr/share/keyrings/elastic-keyring.gpg
-
-echo "deb [signed-by=/usr/share/keyrings/elastic-keyring.gpg] \
-  https://artifacts.elastic.co/packages/8.x/apt stable main" | \
-  sudo tee /etc/apt/sources.list.d/elastic-8.x.list
-
-sudo apt update && sudo apt install filebeat -y
+docker exec -it es01 \
+  elasticsearch-reset-password -u kibana_system -i
 ```
 
-### 4. Configure Filebeat
+Enter `KibanaSystem123!` when prompted.
 
-See `filebeat/filebeat.yml` for the full configuration.
-
-Key settings:
-- Input type: `journald` (reads systemd journal directly)
-- Output: Elasticsearch at `10.0.2.2:9200`
-- Authentication: username/password
+### 5. Verify Elasticsearch authentication
 
 ```bash
-sudo systemctl enable filebeat
-sudo systemctl restart filebeat
+curl -s -u 'kibana_system:KibanaSystem123!' \
+  http://localhost:9200/_security/_authenticate?pretty
 ```
 
-### 5. Verify in Kibana
+Expected: a JSON response with `"username" : "kibana_system"`.
 
-1. Open `http://localhost:5601`
-2. Go to **Discover**
-3. Select the `filebeat-*` Data View
-4. Set time range to **Last 15 minutes**
-5. Confirm log documents are appearing from `victim-server`
+### 6. Check Kibana is up
 
-## Results
+```bash
+curl -I http://127.0.0.1:5601
+```
 
-- 113+ log documents ingested from Ubuntu VM in the first session
-- Logs visible in Kibana Discover under the `filebeat-*` data view
-- Key fields captured: `host.hostname`, `agent.type`, `event.created`, `ecs.version`, `data_stream.dataset`
+Expected: `HTTP/1.1 302 Found`
 
-## Skills Demonstrated
+### 7. Open Kibana in the browser
 
-- SIEM deployment and configuration (Elastic Stack)
-- Log ingestion pipeline design (Filebeat → Elasticsearch)
-- Docker Compose for security tooling on constrained hardware
-- Elasticsearch index and data stream management
-- Kibana data view creation and log analysis
-- Linux log management using `journald`
-- VirtualBox NAT networking for isolated lab environments
-- Security hardening: xpack.security enabled with authentication
+```
+http://localhost:5601
+```
+
+Login with:
+- **Username:** `elastic`
+- **Password:** `ChangeThisNow123!`
+
+---
+
+## Key Configuration Notes
+
+### Docker service naming matters
+
+Kibana connects to Elasticsearch using the **Docker service name**, not the container name. In `docker-compose.yml`:
+
+```yaml
+# CORRECT — uses the service name defined under `services:`
+ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+
+# WRONG — es01 is the container name, not the service name
+ELASTICSEARCH_HOSTS=http://es01:9200
+```
+
+### Two separate passwords
+
+| Account         | Used for                          | Password           |
+|-----------------|-----------------------------------|--------------------|
+| `elastic`       | Browser login to Kibana           | `ChangeThisNow123!`|
+| `kibana_system` | Kibana-to-Elasticsearch API calls | `KibanaSystem123!` |
+
+These are different accounts. `kibana_system` cannot be used to log in to the Kibana UI.
+
+### Memory limits
+
+On an M1 MacBook Air with 8GB RAM, keep JVM heap conservative:
+
+```yaml
+ES_JAVA_OPTS=-Xms1g -Xmx1g
+```
+
+Allocate at least 3GB total to Docker in Docker Desktop settings.
+
+---
+
+## Issues Encountered
+
+### 1. Wrong Elasticsearch host in Kibana config
+**Problem:** Used `http://es01:9200` (container name) instead of `http://elasticsearch:9200` (service name).  
+**Fix:** Changed the `ELASTICSEARCH_HOSTS` value in the Kibana service block to use the service name.
+
+### 2. Kibana credentials mismatch
+**Problem:** `kibana_system` password in Docker Compose did not match the password set inside Elasticsearch, causing repeated `security_exception` errors.  
+**Fix:** Used `elasticsearch-reset-password` inside the container to force the password to match.
+
+### 3. Misplaced environment variables
+**Problem:** Kibana-specific env vars (`ELASTICSEARCH_HOSTS`, `SERVER_HOST`) were accidentally placed inside the Elasticsearch service block.  
+**Fix:** Moved them to the correct Kibana service block.
+
+### 4. zsh special character interference
+**Problem:** Certain characters in commands were interpreted by zsh before reaching the shell, breaking curl and YAML syntax.  
+**Fix:** Used single quotes around curl credentials and passwords.
+
+### 5. Kibana showing empty Discover / "Add integrations"
+**Problem:** Discover was empty after login because no data had been ingested and no data view existed.  
+**Status:** Expected behavior with a fresh stack. Sample data was loaded through Kibana Home to verify the UI worked correctly.
+
+---
+
+## Lessons Learned
+
+- Docker Compose service names and container names are not the same thing — inter-container communication uses service names
+- Elasticsearch 8.x security is enabled by default; credential mismatches fail silently in Kibana until you check logs
+- Always validate Elasticsearch auth directly with curl before debugging Kibana
+- `kibana_system` is a backend service account only — not for browser login
+- Local labs on low-memory hardware need tight JVM and Docker memory limits or containers will OOM silently
+- zsh handles special characters differently than bash — quote everything in curl commands
+
+---
 
 ## Project Status
 
-- [x] Elasticsearch + Kibana running in Docker
-- [x] Ubuntu VM shipping logs via Filebeat
-- [x] Logs visible and searchable in Kibana
-- [ ] Add Logstash for log parsing pipelines
-- [ ] Add Windows VM as second log source
-- [ ] Build detection rules in Kibana Security
-- [ ] Simulate attack scenarios (brute force, privilege escalation)
+The stack was successfully deployed and Kibana login was verified. The project was intentionally scoped to the infrastructure and authentication layer only. Full log ingestion, detection rules, and dashboards were not implemented in this iteration due to local hardware constraints.
+
+The next iteration of this lab moves to **Azure + Splunk** for a cloud-based pipeline with real log sources, detection rules, and alerting.
+
+---
+
+## Next Project
+
+[Azure + Splunk SIEM Lab](https://github.com/obaidadil) — Cloud-based SOC lab with Azure log forwarding, Splunk ingestion, dashboards, and detection alerts.
+
+---
+
+## Screenshots
+
+See the [`screenshots/`](./screenshots) directory.
+
+---
+
+## Author
+
+**Obaid Adil** — IT Operations Analyst transitioning into Cybersecurity  
+[GitHub](https://github.com/obaidadil)
